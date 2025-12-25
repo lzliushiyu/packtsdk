@@ -1,1 +1,1 @@
-# packtsdk
+# 实现packetSDK的自动安装，自动cpu类型，通过手动输入key后后台运行。实现了开机自动运行
