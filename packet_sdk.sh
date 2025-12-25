@@ -1,7 +1,7 @@
 #!/bin/bash
-# PacketSDK 自动部署脚本（直接下载文件夹）
+# PacketSDK 自动部署脚本（直接下载文件）
 # GitHub: https://github.com/lzliushiyu/packtsdk/blob/main/packet_sdk.sh
-# 远程文件地址: http://209.17.118.158/onekey/packet_sdk/
+# 远程文件地址: http://209.17.118.158/onekey/packet_sdk
 
 set -e
 
@@ -20,7 +20,7 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# 1. 下载SDK函数（直接下载文件夹）
+# 1. 下载SDK函数（直接下载文件）
 download_sdk() {
     log_info "未找到本地SDK，开始从远程下载..."
     
@@ -44,34 +44,39 @@ download_sdk() {
     
     # 确保下载工具可用
     if ! command -v wget &> /dev/null; then
-        log_error "未找到wget，请先安装: apt-get install wget 或 yum install wget"
+        log_error "未找到wget，请先安装: apt-get install wget"
         exit 1
     fi
     
     # 创建目标目录
-    mkdir -p "$LOCAL_SDK_PATH"
+    TARGET_DIR="${LOCAL_SDK_PATH}/${REMOTE_ARCH}"
+    mkdir -p "$TARGET_DIR"
     
-    # 下载远程架构文件夹（递归下载，排除无关文件）
-    REMOTE_URL="${DOWNLOAD_BASE_URL}/${REMOTE_ARCH}/"
+    # 直接下载 packet_sdk 文件
+    REMOTE_URL="${DOWNLOAD_BASE_URL}/${REMOTE_ARCH}/packet_sdk"
+    LOCAL_FILE="${TARGET_DIR}/packet_sdk"
+    
     log_info "正在下载: $REMOTE_URL"
+    log_info "保存到: $LOCAL_FILE"
     
-    # 使用wget递归下载（-r），不创建主机目录（-nH），不追溯到父目录（-np）
-    # 限制4层目录（--cut-dirs=4），安静模式（-q），显示进度（--show-progress）
-    wget -r -np -nH --cut-dirs=4 -q --show-progress \
-        -R "index.html*,README.html" \
-        -P "$LOCAL_SDK_PATH" \
-        "$REMOTE_URL"
+    # 使用wget直接下载文件
+    wget -q --show-progress -O "$LOCAL_FILE" "$REMOTE_URL"
     
     # 验证下载
-    EXPECTED_BIN="${LOCAL_SDK_PATH}/${REMOTE_ARCH}/packet_sdk"
-    if [ ! -f "$EXPECTED_BIN" ]; then
-        log_error "下载后未找到程序文件: $EXPECTED_BIN"
-        log_error "请检查远程服务器文件结构"
-        ls -R "$LOCAL_SDK_PATH"
+    if [ ! -f "$LOCAL_FILE" ]; then
+        log_error "下载失败: 文件未创建"
         exit 1
     fi
     
-    log_info "✓ SDK下载完成: ${LOCAL_SDK_PATH}/${REMOTE_ARCH}/"
+    # 检查文件大小（确保不是没有内容的错误文件）
+    FILE_SIZE=$(stat -c%s "$LOCAL_FILE" 2>/dev/null || stat -f%z "$LOCAL_FILE" 2>/dev/null)
+    if [ "$FILE_SIZE" -lt 10000 ]; then  # 假设packet_sdk至少10KB
+        log_error "下载的文件太小($FILE_SIZE bytes)，可能下载失败"
+        ls -lh "$LOCAL_FILE"
+        exit 1
+    fi
+    
+    log_info "✓ SDK下载完成: ${LOCAL_FILE}"
 }
 
 # 2. 环境检查
@@ -88,25 +93,27 @@ check_environment() {
         exit 1
     fi
     
-    # 检查本地SDK是否存在，不存在则下载
+    # 检查本地SDK是否存在
     if [ ! -d "$LOCAL_SDK_PATH" ]; then
         download_sdk
     else
-        # 检查是否包含任何架构文件夹
-        found_arch=0
-        for arch in x86_64 aarch64 i386 armv5l armv6l armv7l; do
-            if [ -d "${LOCAL_SDK_PATH}/${arch}" ]; then
-                found_arch=1
-                break
-            fi
-        done
+        # 检查是否包含当前架构的文件夹
+        ARCH=$(uname -m)
+        case "$ARCH" in
+            x86_64) CHECK_ARCH="x86_64" ;;
+            aarch64) CHECK_ARCH="aarch64" ;;
+            i386|i686) CHECK_ARCH="i386" ;;
+            armv5l) CHECK_ARCH="armv5l" ;;
+            armv6l) CHECK_ARCH="armv6l" ;;
+            armv7l) CHECK_ARCH="armv7l" ;;
+        esac
         
-        if [ $found_arch -eq 0 ]; then
-            log_warn "本地SDK目录存在但无有效架构文件夹，将重新下载"
+        if [ ! -d "${LOCAL_SDK_PATH}/${CHECK_ARCH}" ] || [ ! -f "${LOCAL_SDK_PATH}/${CHECK_ARCH}/packet_sdk" ]; then
+            log_warn "本地缺少当前架构(${CHECK_ARCH})的文件，将重新下载"
             rm -rf "$LOCAL_SDK_PATH"
             download_sdk
         else
-            log_info "发现本地SDK: $LOCAL_SDK_PATH"
+            log_info "发现本地SDK: $LOCAL_SDK_PATH/${CHECK_ARCH}"
         fi
     fi
     
@@ -151,7 +158,6 @@ get_user_input() {
         log_error "appkey格式不正确"
     done
     
-    # 使用固定默认值
     DNS_SERVER="8.8.8.8"
     DNS_PROTO="udp"
     log_info "DNS配置: $DNS_SERVER ($DNS_PROTO)"
@@ -205,8 +211,8 @@ verify_deployment() {
 # 主流程
 main() {
     echo "========================================="
-    echo "  PacketSDK 自动部署脚本 v2.1"
-    echo "  支持自动下载"
+    echo "  PacketSDK 自动部署脚本 v2.2"
+    echo "  支持自动下载文件夹"
     echo "========================================="
     echo
     
