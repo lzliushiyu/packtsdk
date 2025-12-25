@@ -1,7 +1,7 @@
 #!/bin/bash
-# PacketSDK 自动部署脚本（含下载功能）
+# PacketSDK 自动部署脚本（直接下载文件夹）
 # GitHub: https://github.com/lzliushiyu/packtsdk/blob/main/packet_sdk.sh
-# 远程下载地址: http://209.17.118.158/onekey/packet_sdk
+# 远程文件地址: http://209.17.118.158/onekey/packet_sdk/
 
 set -e
 
@@ -20,9 +20,9 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# 1. 下载SDK函数
+# 1. 下载SDK函数（直接下载文件夹）
 download_sdk() {
-    log_info "未找到本地SDK，开始下载..."
+    log_info "未找到本地SDK，开始从远程下载..."
     
     # 检测架构
     ARCH=$(uname -m)
@@ -32,9 +32,10 @@ download_sdk() {
     case "$ARCH" in
         x86_64) REMOTE_ARCH="x86_64" ;;
         aarch64) REMOTE_ARCH="aarch64" ;;
-        i386|i686) REMOTE_ARCH="x86" ;;
+        i386|i686) REMOTE_ARCH="i386" ;;
         armv5l) REMOTE_ARCH="armv5l" ;;
-        armv6|armv7l) REMOTE_ARCH="armv7l" ;;
+        armv6l) REMOTE_ARCH="armv6l" ;;
+        armv7l) REMOTE_ARCH="armv7l" ;;
         *)
             log_error "不支持的架构: $ARCH"
             exit 1
@@ -42,45 +43,35 @@ download_sdk() {
     esac
     
     # 确保下载工具可用
-    if ! command -v wget &> /dev/null && ! command -v curl &> /dev/null; then
-        log_error "未找到wget或curl，请先安装"
+    if ! command -v wget &> /dev/null; then
+        log_error "未找到wget，请先安装: apt-get install wget 或 yum install wget"
         exit 1
     fi
     
-    # 创建临时目录
-    TEMP_DIR=$(mktemp -d)
-    cd "$TEMP_DIR"
-    
-    # 下载SDK压缩包（假设是zip格式）
-    # 如果服务器提供的是文件夹而非压缩包，需要调整此逻辑
-    SDK_URL="${DOWNLOAD_BASE_URL}/${REMOTE_ARCH}.tar.gz"
-    
-    log_info "正在下载: $SDK_URL"
-    
-    if command -v wget &> /dev/null; then
-        wget -q --show-progress "$SDK_URL" -O "packet_sdk_${REMOTE_ARCH}.tar.gz"
-    else
-        curl -L --progress-bar "$SDK_URL" -o "packet_sdk_${REMOTE_ARCH}.tar.gz"
-    fi
-    
-    # 解压到目标位置
-    log_info "解压文件中..."
+    # 创建目标目录
     mkdir -p "$LOCAL_SDK_PATH"
     
-    # 解压（假设是tar.gz格式，如果是zip请改用unzip）
-    tar -xzf "packet_sdk_${REMOTE_ARCH}.tar.gz" -C /root/
+    # 下载远程架构文件夹（递归下载，排除无关文件）
+    REMOTE_URL="${DOWNLOAD_BASE_URL}/${REMOTE_ARCH}/"
+    log_info "正在下载: $REMOTE_URL"
     
-    # 清理临时文件
-    cd /
-    rm -rf "$TEMP_DIR"
+    # 使用wget递归下载（-r），不创建主机目录（-nH），不追溯到父目录（-np）
+    # 限制4层目录（--cut-dirs=4），安静模式（-q），显示进度（--show-progress）
+    wget -r -np -nH --cut-dirs=4 -q --show-progress \
+        -R "index.html*,README.html" \
+        -P "$LOCAL_SDK_PATH" \
+        "$REMOTE_URL"
     
     # 验证下载
-    if [ ! -f "${LOCAL_SDK_PATH}/${REMOTE_ARCH}/packet_sdk" ]; then
-        log_error "下载后未找到程序文件，请检查下载链接和文件结构"
+    EXPECTED_BIN="${LOCAL_SDK_PATH}/${REMOTE_ARCH}/packet_sdk"
+    if [ ! -f "$EXPECTED_BIN" ]; then
+        log_error "下载后未找到程序文件: $EXPECTED_BIN"
+        log_error "请检查远程服务器文件结构"
+        ls -R "$LOCAL_SDK_PATH"
         exit 1
     fi
     
-    log_info "✓ SDK下载完成"
+    log_info "✓ SDK下载完成: ${LOCAL_SDK_PATH}/${REMOTE_ARCH}/"
 }
 
 # 2. 环境检查
@@ -101,7 +92,22 @@ check_environment() {
     if [ ! -d "$LOCAL_SDK_PATH" ]; then
         download_sdk
     else
-        log_info "发现本地SDK: $LOCAL_SDK_PATH"
+        # 检查是否包含任何架构文件夹
+        found_arch=0
+        for arch in x86_64 aarch64 i386 armv5l armv6l armv7l; do
+            if [ -d "${LOCAL_SDK_PATH}/${arch}" ]; then
+                found_arch=1
+                break
+            fi
+        done
+        
+        if [ $found_arch -eq 0 ]; then
+            log_warn "本地SDK目录存在但无有效架构文件夹，将重新下载"
+            rm -rf "$LOCAL_SDK_PATH"
+            download_sdk
+        else
+            log_info "发现本地SDK: $LOCAL_SDK_PATH"
+        fi
     fi
     
     log_info "环境检查通过"
@@ -115,13 +121,11 @@ detect_architecture() {
     case "$ARCH" in
         x86_64) BIN_PATH="${LOCAL_SDK_PATH}/x86_64/packet_sdk" ;;
         aarch64) BIN_PATH="${LOCAL_SDK_PATH}/aarch64/packet_sdk" ;;
-        i386|i686) BIN_PATH="${LOCAL_SDK_PATH}/x86/packet_sdk" ;;
+        i386|i686) BIN_PATH="${LOCAL_SDK_PATH}/i386/packet_sdk" ;;
         armv5l) BIN_PATH="${LOCAL_SDK_PATH}/armv5l/packet_sdk" ;;
-        armv6|armv7l) BIN_PATH="${LOCAL_SDK_PATH}/armv7l/packet_sdk" ;;
-        *)
-            log_error "不支持的架构: $ARCH"
-            exit 1
-            ;;
+        armv6l) BIN_PATH="${LOCAL_SDK_PATH}/armv6l/packet_sdk" ;;
+        armv7l) BIN_PATH="${LOCAL_SDK_PATH}/armv7l/packet_sdk" ;;
+        *) log_error "不支持的架构: $ARCH"; exit 1 ;;
     esac
     
     [ ! -f "$BIN_PATH" ] && { log_error "未找到程序: $BIN_PATH"; exit 1; }
@@ -201,7 +205,7 @@ verify_deployment() {
 # 主流程
 main() {
     echo "========================================="
-    echo "  PacketSDK 自动部署脚本 v2.0"
+    echo "  PacketSDK 自动部署脚本 v2.1"
     echo "  支持自动下载"
     echo "========================================="
     echo
@@ -213,6 +217,15 @@ main() {
     create_systemd_service
     start_service
     verify_deployment
+    
+    echo
+    log_info "=== 部署完成！ ==="
+    echo
+    echo "查看日志: journalctl -u packetsdk -f"
+    echo "服务状态: systemctl status packetsdk"
+    echo "重启服务: systemctl restart packetsdk"
+    echo "停止服务: systemctl stop packetsdk"
+    echo
 }
 
 main
